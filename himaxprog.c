@@ -8,14 +8,15 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 
-static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len)
+static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len, char *label)
 {
 	size_t i;
 
+	printf("%s", label);
 	for (i = 0; i < buf_len; i++) {
 		fprintf(fp, " %02x", buf[i]);
 		if ((i + 1) % 16 == 0) {
-			fprintf(fp, "\n");
+			fprintf(fp, "\n%s", label);
 		}
 	}
 	if (i % 16 != 0) {
@@ -156,6 +157,33 @@ static int hx_flash_wake(FT_HANDLE ftdi)
 	return 0;
 }
 
+static int hx_spi_init(FT_HANDLE ftdi, int spi_num)
+{
+	int err;
+
+	printf("spi_num=%u\n", spi_num);
+
+	err = FT4222_SPIMaster_Init(ftdi, SPI_IO_SINGLE, CLK_DIV_4, CLK_IDLE_LOW, CLK_LEADING, 1 << spi_num);
+	if (err) {
+		perror("FT4222_SPIMaster_Init");
+		return err;
+	}
+
+	err = FT4222_SPIMaster_SetCS(ftdi, CS_ACTIVE_LOW);
+	if (err) {
+		perror("FT4222_SPIMaster_SetCS");
+		return err;
+	}
+
+	err = FT4222_SPIMaster_SetMode(ftdi, 0, 0);
+	if (err) {
+		perror("FT4222_SPIMaster_SetMode");
+		return err;
+	}
+
+	return 0;
+}
+
 static int hx_flash_get_id(FT_HANDLE ftdi, uint8_t *manufacturer_id, uint8_t *device_id)
 {
 	uint8_t cmd_buf[1] = {HX_FLASH_READ_ID};
@@ -205,33 +233,22 @@ static int hx_flash_get_factory_mode(FT_HANDLE ftdi, uint8_t *factory_mode)
 
 static int cmd_flash_detect(FT_HANDLE ftdi, char **argv)
 {
+	char *s;
 	uint8_t manufacturer_id = 0;
 	uint8_t device_id = 0;
 	uint8_t factory_mode = 0;
 	int spi_num;
 	int err;
 
-	if (argv[0][0] < '0' || argv[0][0] > '3' || argv[0][1] != '\0') {
+	spi_num = strtoul(argv[0], &s, 10);
+	if (*s != '\0' || spi_num > 3) {
 		fprintf(stderr, "flash detect needs a number between 0 and 3 as argument\n");
 		return -EINVAL;
 	}
-	spi_num = 1 << (argv[0][0] - '0');
 
-	err = FT4222_SPIMaster_Init(ftdi, SPI_IO_SINGLE, CLK_DIV_4, CLK_IDLE_LOW, CLK_LEADING, spi_num);
+	err = hx_spi_init(ftdi, spi_num);
 	if (err) {
-		perror("FT4222_SPIMaster_Init");
-		return err;
-	}
-
-	err = FT4222_SPIMaster_SetCS(ftdi, CS_ACTIVE_LOW);
-	if (err) {
-		perror("FT4222_SPIMaster_SetCS");
-		return err;
-	}
-
-	err = FT4222_SPIMaster_SetMode(ftdi, 0, 0);
-	if (err) {
-		perror("FT4222_SPIMaster_SetMode");
+		perror("hx_spi_init");
 		return err;
 	}
 
@@ -269,6 +286,7 @@ int hx_hex2bin(char *hex, uint8_t *buf)
 		if ((b0 = hex[ia++]) == '\0') {
 			break;
 		}
+
 		if ((b1 = hex[ia++]) == '\0') {
 			fprintf(stderr, "odd number of characters in '%s'\n", hex);
 			return -EINVAL;
@@ -290,7 +308,7 @@ int hx_hex2bin(char *hex, uint8_t *buf)
 			return b1;
 		}
 
-		buf[ib++] = ((b0 << 4) & 0xf) | ((b1 << 0) & 0xf);
+		buf[ib++] = ((b0 & 0xf) << 4) | ((b1 & 0xf) << 0);
 	}
 
 	return 0;
@@ -298,26 +316,39 @@ int hx_hex2bin(char *hex, uint8_t *buf)
 
 static int cmd_spi(FT_HANDLE ftdi, char **argv)
 {
-	char *s;
 	uint8_t *buf;
+	char *s;
 	size_t write_len;
 	size_t read_len;
 	uint16_t _;
+	int spi_num;
 	int err;
 
-	buf = (uint8_t *)argv[0];
-	write_len = strlen(argv[0]) / 2;
+	spi_num = strtoul(argv[0], &s, 10);
+	if (*s != '\0' || spi_num > 3) {
+		fprintf(stderr, "<arg1> needs to be a number between 0 and 3\n");
+		return -EINVAL;
+	}
 
-	err = hx_hex2bin(argv[0], buf);
+	buf = (uint8_t *)argv[1];
+	write_len = strlen(argv[1]) / 2;
+
+	err = hx_hex2bin(argv[1], buf);
 	if (err) {
-		fprintf(stderr, "invalid hex string");
+		fprintf(stderr, "<arg2> is invalid hex string\n");
 		return err;
 	}
 
-	read_len = strtoul(argv[1], &s, 10);
+	read_len = strtoul(argv[2], &s, 10);
 	if (*s != '\0' || read_len > INT16_MAX) {
-		fprintf(stderr, "invalid number: '%s'\n", argv[1]);
+		fprintf(stderr, "<arg3> is invalid number: '%s'\n", argv[2]);
 		return -EINVAL;
+	}
+
+	err = hx_spi_init(ftdi, spi_num);
+	if (err) {
+		perror("hx_spi_init");
+		return err;
 	}
 
 	err = FT4222_SPIMaster_SingleWrite(ftdi, buf, write_len, &_, false);
@@ -325,6 +356,8 @@ static int cmd_spi(FT_HANDLE ftdi, char **argv)
 		perror("FT4222_SPIMaster_SingleRead");
 		return err;
 	}
+
+	hx_hexdump(stdout, buf, write_len, "w:");
 
 	buf = malloc(read_len);
 	if (buf == NULL) {
@@ -338,7 +371,7 @@ static int cmd_spi(FT_HANDLE ftdi, char **argv)
 		goto end;
 	}
 
-	hx_hexdump(stdout, buf, read_len);
+	hx_hexdump(stdout, buf, read_len, "r:");
 end:
 	free(buf);
 	return err;
@@ -489,8 +522,8 @@ const struct hx_cmd {
 } cmds[] = {
 	{{"flash", "detect"}, 1, cmd_flash_detect,
 	 "scan the presence of a flash chip on each SPI bus"},
-	{{"spi"}, 2, cmd_spi,
-	 "Write hex data <arg1> over SPI, then read <arg2> number of bytes"},
+	{{"spi"}, 3, cmd_spi,
+	 "Write to SPI num <arg1> the hex data <arg2> then read <arg3> bytes"},
 	{{"gpio", "read"}, 0, cmd_gpio_read,
 	 "Read from all 4 GPIO pins"},
 	{{"gpio", "write"}, 1, cmd_gpio_write,
