@@ -408,6 +408,8 @@ const struct hx_cmd {
 } cmds[] = {
 	{{"flash", "detect"}, 1, cmd_flash_detect,
 	 "scan the presence of a flash chip on each SPI bus"},
+	{{"spi"}, 1, cmd_spi,
+	 "Write bytes over SPI, or read where 'rr' is encountered"},
 	{{"gpio", "read"}, 0, cmd_gpio_read,
 	 "Read from all 4 GPIO pins"},
 	{{"gpio", "write"}, 1, cmd_gpio_write,
