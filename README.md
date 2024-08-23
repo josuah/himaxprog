@@ -4,17 +4,17 @@ Work in progress tool to program the Himax WiseEye 2 (WE2) series chips through 
 
 ## Build
 
-```
-# Download and extract the libftdi in /usr/local, in example here for Linux
-mkdir -p /tmp/libftdi
-curl -o libft4222.tar.gz https://ftdichip.com/wp-content/uploads/2024/03/libft4222-linux-1.4.4.188.tgz
-tar -xz -C /tmp/libftdi -f libft4222.tar.gz
+```bash
+# In this example, it is the library for Linux or WSL
+url=https://ftdichip.com/wp-content/uploads/2024/03/libft4222-linux-1.4.4.188.tgz
 
-# Install the libftdi
-sudo sh /tmp/libftdi/install4222.sh
+# Download and install the libft4222
+curl -L "$url" | tar -xz -f -
+sudo mkdir -p /usr/local/include /usr/local/lib /usr/local/bin
+sudo sh install4222.sh
 
 # Install himaxprog in /usr/local
-make install
+sudo make install
 ```
 
 ## Usage
