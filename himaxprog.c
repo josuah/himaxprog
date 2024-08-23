@@ -44,36 +44,31 @@ static int hx_chip_version(FILE *fp, unsigned int location)
 	fprintf(fp, "  Chip version: %08X, LibFT4222 version: %08X\n",
 		v.chipVersion, v.dllVersion);
 
-	FT_Close(ftdi);
 	return 0;
 }
 
-static int cmd_list(char **argv)
+static int hx_list(FILE *fp)
 {
 	FT_DEVICE_LIST_INFO_NODE *info = NULL;
 	unsigned int num = 0;
 	bool found = false;
 	int err;
 
-	(void)argv;
-
 	err = FT_CreateDeviceInfoList(&num);
 	if (err) {
 		perror("FT_CreateDeviceInfoList");
-		goto exit;
+		return err;
 	}
 	
 	if (num == 0) {
 		perror("No FTDI devices found");
-		err = ENODEV;
-		goto exit;
+		return ENODEV;
 	}
 
 	info = calloc(num, sizeof(FT_DEVICE_LIST_INFO_NODE));
 	if (info == NULL) {
 		perror("calloc");
-		err = errno;
-		goto exit;
+		return ENOMEM;
 	}
 
 	err = FT_GetDeviceInfoList(info, &num);
@@ -92,7 +87,7 @@ static int cmd_list(char **argv)
 			 */
 			if (info[i].Description[n - 1] == 'A') {
 				/* Interface A may be configured as an I2C master. */
-				printf("\nDevice %u: '%s'\n", i, info[i].Description);
+				fprintf(fp, "\nDevice %u: '%s'\n", i, info[i].Description);
 				hx_chip_version(stdout, info[i].LocId);
 			}
 			found = true;
@@ -100,7 +95,7 @@ static int cmd_list(char **argv)
 		 
 		if (info[i].Type == FT_DEVICE_4222H_3) {
 			/* In mode 3, the FT4222H presents a single interface. */
-			printf("\nDevice %u: '%s'\n", i, info[i].Description);
+			fprintf(fp, "\nDevice %u: '%s'\n", i, info[i].Description);
 			hx_chip_version(stdout, info[i].LocId);
 			found = true;
 		}
@@ -115,33 +110,8 @@ exit:
 	return err;
 }
 
-#define HX_FLASH_RDID	0x9f
-
-static int hx_flash_get_id(FT_HANDLE ftdi, uint8_t *manufacturer_id, uint8_t *device_id)
-{
-	uint8_t cmd_buf[1] = {HX_FLASH_RDID};
-	uint8_t res_buf[2];
-	uint16_t _;
-	int err;
-
-	err = FT4222_SPIMaster_SingleWrite(ftdi, cmd_buf, sizeof(cmd_buf), &_, false);
-	if (err) {
-		perror("FT4222_SPIMaster_SingleRead");
-		return err;
-	}
-
-	err = FT4222_SPIMaster_SingleRead(ftdi, res_buf, sizeof(res_buf), &_, true);
-	if (err) {
-		perror("FT4222_SPIMaster_SingleRead");
-		return err;
-	}
-
-	*manufacturer_id = res_buf[0];
-	*device_id = res_buf[1];
-
-	hx_hexdump(stdout, res_buf, sizeof(res_buf));
-	return 0;
-}
+#define HX_FLASH_READ_ID	0x9f
+#define HX_FLASH_FACTORY_MODE	0x44
 
 static int hx_flash_wake(FT_HANDLE ftdi)
 {
@@ -150,7 +120,7 @@ static int hx_flash_wake(FT_HANDLE ftdi)
 	uint16_t _;
 	int err;
 
-	ts.tv_nsec = 1000*1000;
+	ts.tv_nsec = 1000 * 1000;
 	err = nanosleep(&ts, NULL);
 	if (err) {
 		perror("nanosleep");
@@ -186,11 +156,58 @@ static int hx_flash_wake(FT_HANDLE ftdi)
 	return 0;
 }
 
-static int cmd_flash_detect(char **argv)
+static int hx_flash_get_id(FT_HANDLE ftdi, uint8_t *manufacturer_id, uint8_t *device_id)
 {
-	FT_HANDLE ftdi = NULL;
+	uint8_t cmd_buf[1] = {HX_FLASH_READ_ID};
+	uint8_t res_buf[2];
+	uint16_t _;
+	int err;
+
+	err = FT4222_SPIMaster_SingleWrite(ftdi, cmd_buf, sizeof(cmd_buf), &_, false);
+	if (err) {
+		perror("FT4222_SPIMaster_SingleRead");
+		return err;
+	}
+
+	err = FT4222_SPIMaster_SingleRead(ftdi, res_buf, sizeof(res_buf), &_, true);
+	if (err) {
+		perror("FT4222_SPIMaster_SingleRead");
+		return err;
+	}
+
+	*manufacturer_id = res_buf[0];
+	*device_id = res_buf[1];
+	return 0;
+}
+
+static int hx_flash_get_factory_mode(FT_HANDLE ftdi, uint8_t *factory_mode)
+{
+	uint8_t cmd_buf[1] = {HX_FLASH_FACTORY_MODE};
+	uint8_t res_buf[1];
+	uint16_t _;
+	int err;
+
+	err = FT4222_SPIMaster_SingleWrite(ftdi, cmd_buf, sizeof(cmd_buf), &_, false);
+	if (err) {
+		perror("FT4222_SPIMaster_SingleRead");
+		return err;
+	}
+
+	err = FT4222_SPIMaster_SingleRead(ftdi, res_buf, sizeof(res_buf), &_, true);
+	if (err) {
+		perror("FT4222_SPIMaster_SingleRead");
+		return err;
+	}
+
+	*factory_mode = res_buf[0];
+	return 0;
+}
+
+static int cmd_flash_detect(FT_HANDLE ftdi, char **argv)
+{
 	uint8_t manufacturer_id = 0;
 	uint8_t device_id = 0;
+	uint8_t factory_mode = 0;
 	int spi_num;
 	int err;
 
@@ -200,48 +217,130 @@ static int cmd_flash_detect(char **argv)
 	}
 	spi_num = 1 << (argv[0][0] - '0');
 
-	err = FT_Open(0, &ftdi);
-	if (err) {
-		perror("FT_Open");
-		goto end;
-	}
-
 	err = FT4222_SPIMaster_Init(ftdi, SPI_IO_SINGLE, CLK_DIV_4, CLK_IDLE_LOW, CLK_LEADING, spi_num);
 	if (err) {
 		perror("FT4222_SPIMaster_Init");
-		goto end;
+		return err;
 	}
 
 	err = FT4222_SPIMaster_SetCS(ftdi, CS_ACTIVE_LOW);
 	if (err) {
 		perror("FT4222_SPIMaster_SetCS");
-		goto end;
+		return err;
 	}
 
 	err = FT4222_SPIMaster_SetMode(ftdi, 0, 0);
 	if (err) {
 		perror("FT4222_SPIMaster_SetMode");
-		goto end;
+		return err;
 	}
 
 	err = hx_flash_wake(ftdi);
 	if (err) {
 		perror("hx_flash_wake");
-		goto end;
+		return err;
 	}
 
 	err = hx_flash_get_id(ftdi, &manufacturer_id, &device_id);
 	if (err) {
 		perror("hx_flash_get_id");
-		goto end;
+		return err;
 	}
 
 	printf("manufacturer_id = %u\n", manufacturer_id);
 	printf("device_id = %u\n", device_id);
 
-	FT4222_UnInitialize(ftdi);
+	err = hx_flash_get_factory_mode(ftdi, &factory_mode);
+	if (err) {
+		perror("hx_flash_get_factory_mode");
+		return err;
+	}
 
-end:
+	printf("factory_mode = %u\n", factory_mode);
+
+	return 0;
+}
+
+int cmd_gpio_read(FT_HANDLE ftdi, char **argv)
+{
+	GPIO_Dir directions[4] = {GPIO_INPUT, GPIO_INPUT, GPIO_INPUT, GPIO_INPUT};
+	int err;
+
+	(void)argv;
+
+	err = FT4222_GPIO_Init(ftdi, directions);
+	if (err) {
+		perror("FT4222_GPIO_Init");
+		return err;
+	}
+
+	printf("gpio:");
+	for (size_t i = 0; i < 4; i++) {
+		unsigned int val;
+
+		err = FT4222_GPIO_Read(ftdi, i, &val);
+		if (err) {
+			perror("FT4222_GPIO_Read");
+			return err;
+		}
+		printf(" %lu:%s", i, val ? "high" : "low");
+	}	
+	printf("\n");
+
+	return 0;
+}
+
+int cmd_gpio_write(FT_HANDLE ftdi, char **argv)
+{
+	GPIO_Dir directions[4];
+	int err;
+
+	if (strspn(argv[0], "01z") != 4 && argv[0][4] != '\0') {
+		fprintf(stderr, "expecting a string[4] made of '0', '1' or 'z'\n");
+		return EINVAL;
+	}
+
+	directions[0] = argv[0][0] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
+	directions[1] = argv[0][1] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
+	directions[2] = argv[0][2] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
+	directions[3] = argv[0][3] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
+
+	err = FT4222_GPIO_Init(ftdi, directions);
+	if (err) {
+		perror("FT4222_GPIO_Init");
+		return err;
+	}
+
+	for (size_t i = 0; i < 4; i++) {
+		if (directions[i] == GPIO_INPUT) {
+			continue;
+		}
+
+		err = FT4222_GPIO_Write(ftdi, i, argv[0][i] - '0');
+		if (err) {
+			perror("FT4222_GPIO_Write");
+			return err;
+		}
+	}	
+
+	/* Read back immediately */
+	return cmd_gpio_read(ftdi, NULL);
+}
+
+int hx_run_command(int (*fn)(FT_HANDLE, char **), char **argv)
+{
+	FT_HANDLE ftdi;
+	int err;
+
+	err = FT_Open(0, &ftdi);
+	if (err) {
+		perror("FT_Open");
+		return err;
+	}
+
+	err = fn(ftdi, argv);
+
+	FT4222_UnInitialize(ftdi);
 	FT_Close(ftdi);
 	return err;
 }
@@ -249,16 +348,18 @@ end:
 const struct hx_cmd {
 	char *argv[10];
 	size_t argc;
-	int (*fn)(char **);
+	int (*fn)(FT_HANDLE, char **);
 	char *help;
 } cmds[] = {
-	{{"list"}, 0, cmd_list,
-	 "show all supported FTDI devices attached"},
 	{{"flash", "detect"}, 1, cmd_flash_detect,
 	 "scan the presence of a flash chip on each SPI bus"},
+	{{"gpio", "read"}, 0, cmd_gpio_read,
+	 "Read from all 4 GPIO pins"},
+	{{"gpio", "write"}, 1, cmd_gpio_write,
+	 "Write to selected GPIO pins"},
 };
 
-static void usage(char *argv0)
+static int usage(char *argv0)
 {
 	for (size_t i = 0; i < ARRAY_SIZE(cmds); i++) {
 		const struct hx_cmd *cmd = &cmds[i];
@@ -275,6 +376,8 @@ static void usage(char *argv0)
 		}
 		fprintf(stderr, " - %s\n", cmd->help);
 	}
+
+	return hx_list(stdout);
 }
 
 int main(int argc, char **argv)
@@ -297,7 +400,7 @@ int main(int argc, char **argv)
 					}
 				}
 				if (cmd->argv[ii + cmd->argc] == NULL) {
-					return cmd->fn(argv + ii);
+					return hx_run_command(cmd->fn, argv + ii);
 				}
 			} else if (argv[ii] == NULL || strcmp(argv[ii], cmd->argv[ii]) != 0) {
 				goto next_cmd;
@@ -307,6 +410,5 @@ next_cmd:;
 	}
 
 	/* No command found: exit */
-	usage(argv0);
-	return 1;
+	return usage(argv0);
 }
