@@ -1,6 +1,7 @@
 CFLAGS = -std=c99 -pedantic -Wall -Wextra -D_XOPEN_SOURCE=900
 SRC = himaxprog.c
 LIB = -lft4222 -lstdc++
+PREFIX = /usr/local
 
 all: himaxprog
 
@@ -9,3 +10,6 @@ clean:
 
 himaxprog: $(SRC)
 	$(CC) $(CFLAGS) -o $@ $(SRC) $(LIB)
+
+install: himaxprog
+	cp himaxprog $(PREFIX)/bin/himaxprog

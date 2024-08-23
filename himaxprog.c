@@ -8,7 +8,6 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 
-#if 0
 static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len)
 {
 	size_t i;
@@ -23,7 +22,6 @@ static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len)
 		fprintf(fp, "\n");
 	}
 }
-#endif
 
 static int hx_chip_version(FILE *fp, unsigned int location)
 {
@@ -64,13 +62,13 @@ static int hx_list(FILE *fp)
 	
 	if (num == 0) {
 		perror("No FTDI devices found");
-		return ENODEV;
+		return -ENODEV;
 	}
 
 	info = calloc(num, sizeof(FT_DEVICE_LIST_INFO_NODE));
 	if (info == NULL) {
 		perror("calloc");
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	err = FT_GetDeviceInfoList(info, &num);
@@ -215,7 +213,7 @@ static int cmd_flash_detect(FT_HANDLE ftdi, char **argv)
 
 	if (argv[0][0] < '0' || argv[0][0] > '3' || argv[0][1] != '\0') {
 		fprintf(stderr, "flash detect needs a number between 0 and 3 as argument\n");
-		return EINVAL;
+		return -EINVAL;
 	}
 	spi_num = 1 << (argv[0][0] - '0');
 
@@ -263,6 +261,89 @@ static int cmd_flash_detect(FT_HANDLE ftdi, char **argv)
 	return 0;
 }
 
+int hx_hex2bin(char *hex, uint8_t *buf)
+{
+	for (size_t ia = 0, ib = 0;;) {
+		int b0, b1;
+
+		if ((b0 = hex[ia++]) == '\0') {
+			break;
+		}
+		if ((b1 = hex[ia++]) == '\0') {
+			fprintf(stderr, "odd number of characters in '%s'\n", hex);
+			return -EINVAL;
+		}
+
+		b0 = (b0 >= '0' && b0 <= '9') ? b0 - '0' :
+		     (b0 >= 'a' && b0 <= 'f') ? b0 - 'a' + 10 :
+		     (b0 >= 'A' && b0 <= 'F') ? b0 - 'A' + 10 :
+		     -EINVAL;
+		if (b0 < 0) {
+			return b0;
+		}
+
+		b1 = (b1 >= '0' && b1 <= '9') ? b1 - '0' :
+		     (b1 >= 'a' && b1 <= 'f') ? b1 - 'a' + 10 :
+		     (b1 >= 'A' && b1 <= 'F') ? b1 - 'A' + 10 :
+		     -EINVAL;
+		if (b1 < 0) {
+			return b1;
+		}
+
+		buf[ib++] = ((b0 << 4) & 0xf) | ((b1 << 0) & 0xf);
+	}
+
+	return 0;
+}
+
+static int cmd_spi(FT_HANDLE ftdi, char **argv)
+{
+	char *s;
+	uint8_t *buf;
+	size_t write_len;
+	size_t read_len;
+	uint16_t _;
+	int err;
+
+	buf = (uint8_t *)argv[0];
+	write_len = strlen(argv[0]) / 2;
+
+	err = hx_hex2bin(argv[0], buf);
+	if (err) {
+		fprintf(stderr, "invalid hex string");
+		return err;
+	}
+
+	read_len = strtoul(argv[1], &s, 10);
+	if (*s != '\0' || read_len > INT16_MAX) {
+		fprintf(stderr, "invalid number: '%s'\n", argv[1]);
+		return -EINVAL;
+	}
+
+	err = FT4222_SPIMaster_SingleWrite(ftdi, buf, write_len, &_, false);
+	if (err) {
+		perror("FT4222_SPIMaster_SingleRead");
+		return err;
+	}
+
+	buf = malloc(read_len);
+	if (buf == NULL) {
+		perror("malloc");
+		return -ENOMEM;
+	}
+
+	err = FT4222_SPIMaster_SingleRead(ftdi, buf, read_len, &_, false);
+	if (err) {
+		perror("FT4222_SPIMaster_SingleRead");
+		goto end;
+	}
+
+	hx_hexdump(stdout, buf, read_len);
+end:
+	free(buf);
+	return err;
+}
+
 int cmd_gpio_read(FT_HANDLE ftdi, char **argv)
 {
 	GPIO_Dir directions[4] = {GPIO_INPUT, GPIO_INPUT, GPIO_INPUT, GPIO_INPUT};
@@ -299,7 +380,7 @@ int cmd_gpio_write(FT_HANDLE ftdi, char **argv)
 
 	if (strspn(argv[0], "01z") != 4 && argv[0][4] != '\0') {
 		fprintf(stderr, "expecting a string[4] made of '0', '1' or 'z'\n");
-		return EINVAL;
+		return -EINVAL;
 	}
 
 	directions[0] = argv[0][0] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
@@ -335,7 +416,7 @@ int cmd_gpio_suspend(FT_HANDLE ftdi, char **argv)
 
 	if (strspn(argv[0], "01") != 4 && argv[0][1] != '\0') {
 		fprintf(stderr, "expecting a string[1] made of '0' or '1'\n");
-		return EINVAL;
+		return -EINVAL;
 	}
 
 	err = FT4222_SetSuspendOut(ftdi, argv[0][0] == '0' ? false : true);
@@ -354,7 +435,7 @@ int cmd_gpio_wakeup(FT_HANDLE ftdi, char **argv)
 
 	if (strspn(argv[0], "01") != 4 && argv[0][1] != '\0') {
 		fprintf(stderr, "expecting a string[1] made of '0' or '1'\n");
-		return EINVAL;
+		return -EINVAL;
 	}
 
 	err = FT4222_SetWakeUpInterrupt(ftdi, argv[0][0] == '0' ? false : true);
@@ -408,8 +489,8 @@ const struct hx_cmd {
 } cmds[] = {
 	{{"flash", "detect"}, 1, cmd_flash_detect,
 	 "scan the presence of a flash chip on each SPI bus"},
-	{{"spi"}, 1, cmd_spi,
-	 "Write bytes over SPI, or read where 'rr' is encountered"},
+	{{"spi"}, 2, cmd_spi,
+	 "Write hex data <arg1> over SPI, then read <arg2> number of bytes"},
 	{{"gpio", "read"}, 0, cmd_gpio_read,
 	 "Read from all 4 GPIO pins"},
 	{{"gpio", "write"}, 1, cmd_gpio_write,
@@ -424,6 +505,7 @@ const struct hx_cmd {
 
 static int usage(char *argv0)
 {
+	fprintf(stderr, "Utility to access the FT4222 chip such as on the Himax WE2 board\n");
 	for (size_t i = 0; i < ARRAY_SIZE(cmds); i++) {
 		const struct hx_cmd *cmd = &cmds[i];
 
@@ -437,7 +519,7 @@ static int usage(char *argv0)
 		for (size_t ii = 0; ii < cmd->argc; ii++) {
 			fprintf(stderr, " <arg%lu>", ii + 1);
 		}
-		fprintf(stderr, " - %s\n", cmd->help);
+		fprintf(stderr, "\n    %s\n", cmd->help);
 	}
 
 	return hx_list(stdout);
