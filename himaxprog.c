@@ -26,7 +26,7 @@ static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len, char *label)
 	}
 }
 
-int hx_hex2bin(char *hex, uint8_t *buf)
+static int hx_hex2bin(char *hex, uint8_t *buf)
 {
 	for (size_t ia = 0, ib = 0;;) {
 		int b0, b1;
@@ -376,7 +376,7 @@ end:
 	return err;
 }
 
-int cmd_gpio_read(FT_HANDLE ftdi, char **argv)
+static int cmd_gpio_read(FT_HANDLE ftdi, char **argv)
 {
 	GPIO_Dir directions[4] = {GPIO_INPUT, GPIO_INPUT, GPIO_INPUT, GPIO_INPUT};
 	int err;
@@ -405,7 +405,7 @@ int cmd_gpio_read(FT_HANDLE ftdi, char **argv)
 	return 0;
 }
 
-int cmd_gpio_write(FT_HANDLE ftdi, char **argv)
+static int cmd_gpio_write(FT_HANDLE ftdi, char **argv)
 {
 	GPIO_Dir directions[4];
 	int err;
@@ -461,7 +461,7 @@ int cmd_gpio_suspend(FT_HANDLE ftdi, char **argv)
 	return cmd_gpio_read(ftdi, NULL);
 }
 
-int cmd_gpio_wakeup(FT_HANDLE ftdi, char **argv)
+static int cmd_gpio_wakeup(FT_HANDLE ftdi, char **argv)
 {
 	int err;
 
@@ -480,7 +480,7 @@ int cmd_gpio_wakeup(FT_HANDLE ftdi, char **argv)
 	return cmd_gpio_read(ftdi, NULL);
 }
 
-int cmd_reset(FT_HANDLE ftdi, char **argv)
+static int cmd_reset(FT_HANDLE ftdi, char **argv)
 {
 	int err;
 
@@ -495,7 +495,7 @@ int cmd_reset(FT_HANDLE ftdi, char **argv)
 	return 0;
 }
 
-int hx_run_command(int (*fn)(FT_HANDLE, char **), char **argv)
+static int hx_run_command(int (*fn)(FT_HANDLE, char **), char **argv)
 {
 	FT_HANDLE ftdi;
 	int err;
@@ -513,7 +513,7 @@ int hx_run_command(int (*fn)(FT_HANDLE, char **), char **argv)
 	return err;
 }
 
-const struct hx_cmd {
+static const struct hx_cmd {
 	char *argv[5];
 	size_t argc;
 	int (*fn)(FT_HANDLE, char **);
