@@ -8,6 +8,7 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 
+#if 0
 static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len)
 {
 	size_t i;
@@ -22,6 +23,7 @@ static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len)
 		fprintf(fp, "\n");
 	}
 }
+#endif
 
 static int hx_chip_version(FILE *fp, unsigned int location)
 {
@@ -327,6 +329,59 @@ int cmd_gpio_write(FT_HANDLE ftdi, char **argv)
 	return cmd_gpio_read(ftdi, NULL);
 }
 
+int cmd_gpio_suspend(FT_HANDLE ftdi, char **argv)
+{
+	int err;
+
+	if (strspn(argv[0], "01") != 4 && argv[0][1] != '\0') {
+		fprintf(stderr, "expecting a string[1] made of '0' or '1'\n");
+		return EINVAL;
+	}
+
+	err = FT4222_SetSuspendOut(ftdi, argv[0][0] == '0' ? false : true);
+	if (err) {
+		perror("FT4222_SetSuspendOut");
+		return err;
+	}
+
+	/* Read back immediately */
+	return cmd_gpio_read(ftdi, NULL);
+}
+
+int cmd_gpio_wakeup(FT_HANDLE ftdi, char **argv)
+{
+	int err;
+
+	if (strspn(argv[0], "01") != 4 && argv[0][1] != '\0') {
+		fprintf(stderr, "expecting a string[1] made of '0' or '1'\n");
+		return EINVAL;
+	}
+
+	err = FT4222_SetWakeUpInterrupt(ftdi, argv[0][0] == '0' ? false : true);
+	if (err) {
+		perror("FT4222_SetWakeUpInterrupt");
+		return err;
+	}
+
+	/* Read back immediately */
+	return cmd_gpio_read(ftdi, NULL);
+}
+
+int cmd_reset(FT_HANDLE ftdi, char **argv)
+{
+	int err;
+
+	(void)argv;
+
+	err = FT4222_ChipReset(ftdi);
+	if (err) {
+		perror("FT4222_ChipReset");
+		return err;
+	}
+
+	return 0;
+}
+
 int hx_run_command(int (*fn)(FT_HANDLE, char **), char **argv)
 {
 	FT_HANDLE ftdi;
@@ -346,7 +401,7 @@ int hx_run_command(int (*fn)(FT_HANDLE, char **), char **argv)
 }
 
 const struct hx_cmd {
-	char *argv[10];
+	char *argv[5];
 	size_t argc;
 	int (*fn)(FT_HANDLE, char **);
 	char *help;
@@ -357,6 +412,12 @@ const struct hx_cmd {
 	 "Read from all 4 GPIO pins"},
 	{{"gpio", "write"}, 1, cmd_gpio_write,
 	 "Write to selected GPIO pins"},
+	{{"gpio", "suspend"}, 1, cmd_gpio_suspend,
+	 "Write to the 'suspend' GPIO pin"},
+	{{"gpio", "wakeup"}, 1, cmd_gpio_wakeup,
+	 "Write to the 'wakeup' GPIO pin"},
+	{{"reset"}, 0, cmd_reset,
+	 "Reset the FTDI adapter chip"},
 };
 
 static int usage(char *argv0)
