@@ -143,6 +143,49 @@ static int hx_flash_get_id(FT_HANDLE ftdi, uint8_t *manufacturer_id, uint8_t *de
 	return 0;
 }
 
+static int hx_flash_wake(FT_HANDLE ftdi)
+{
+	struct timespec ts = {0};
+	uint8_t byte;
+	uint16_t _;
+	int err;
+
+	ts.tv_nsec = 1000*1000;
+	err = nanosleep(&ts, NULL);
+	if (err) {
+		perror("nanosleep");
+		return err;
+	}
+
+	err = FT4222_SPIMaster_SingleRead(ftdi, &byte, 1, &_, false);
+	if (err) {
+		perror("FT4222_SPIMaster_SingleRead");
+		return err;
+	}
+
+	ts.tv_nsec = 1000*1000;
+	err = nanosleep(&ts, NULL);
+	if (err) {
+		perror("nanosleep");
+		return err;
+	}
+
+	err = FT4222_SPIMaster_SingleRead(ftdi, &byte, 1, &_, true);
+	if (err) {
+		perror("FT4222_SPIMaster_SingleRead");
+		return err;
+	}
+
+	ts.tv_nsec = 1000*1000;
+	err = nanosleep(&ts, NULL);
+	if (err) {
+		perror("nanosleep");
+		return err;
+	}
+
+	return 0;
+}
+
 static int cmd_flash_detect(char **argv)
 {
 	FT_HANDLE ftdi = NULL;
@@ -178,6 +221,12 @@ static int cmd_flash_detect(char **argv)
 	err = FT4222_SPIMaster_SetMode(ftdi, 0, 0);
 	if (err) {
 		perror("FT4222_SPIMaster_SetMode");
+		goto end;
+	}
+
+	err = hx_flash_wake(ftdi);
+	if (err) {
+		perror("hx_flash_wake");
 		goto end;
 	}
 
