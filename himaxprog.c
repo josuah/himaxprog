@@ -7,6 +7,8 @@
 #include "libft4222.h"
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+#define HX_FLASH_READ_ID	0x9f
+#define HX_FLASH_FACTORY_MODE	0x44
 
 static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len, char *label)
 {
@@ -22,6 +24,42 @@ static void hx_hexdump(FILE *fp, uint8_t *buf, size_t buf_len, char *label)
 	if (i % 16 != 0) {
 		fprintf(fp, "\n");
 	}
+}
+
+int hx_hex2bin(char *hex, uint8_t *buf)
+{
+	for (size_t ia = 0, ib = 0;;) {
+		int b0, b1;
+
+		if ((b0 = hex[ia++]) == '\0') {
+			break;
+		}
+
+		if ((b1 = hex[ia++]) == '\0') {
+			fprintf(stderr, "odd number of characters in '%s'\n", hex);
+			return -EINVAL;
+		}
+
+		b0 = (b0 >= '0' && b0 <= '9') ? b0 - '0' :
+		     (b0 >= 'a' && b0 <= 'f') ? b0 - 'a' + 10 :
+		     (b0 >= 'A' && b0 <= 'F') ? b0 - 'A' + 10 :
+		     -EINVAL;
+		if (b0 < 0) {
+			return b0;
+		}
+
+		b1 = (b1 >= '0' && b1 <= '9') ? b1 - '0' :
+		     (b1 >= 'a' && b1 <= 'f') ? b1 - 'a' + 10 :
+		     (b1 >= 'A' && b1 <= 'F') ? b1 - 'A' + 10 :
+		     -EINVAL;
+		if (b1 < 0) {
+			return b1;
+		}
+
+		buf[ib++] = ((b0 & 0xf) << 4) | ((b1 & 0xf) << 0);
+	}
+
+	return 0;
 }
 
 static int hx_chip_version(FILE *fp, unsigned int location)
@@ -110,9 +148,6 @@ exit:
 	free(info);
 	return err;
 }
-
-#define HX_FLASH_READ_ID	0x9f
-#define HX_FLASH_FACTORY_MODE	0x44
 
 static int hx_flash_wake(FT_HANDLE ftdi)
 {
@@ -274,42 +309,6 @@ static int cmd_flash_detect(FT_HANDLE ftdi, char **argv)
 	}
 
 	printf("factory_mode = %u\n", factory_mode);
-
-	return 0;
-}
-
-int hx_hex2bin(char *hex, uint8_t *buf)
-{
-	for (size_t ia = 0, ib = 0;;) {
-		int b0, b1;
-
-		if ((b0 = hex[ia++]) == '\0') {
-			break;
-		}
-
-		if ((b1 = hex[ia++]) == '\0') {
-			fprintf(stderr, "odd number of characters in '%s'\n", hex);
-			return -EINVAL;
-		}
-
-		b0 = (b0 >= '0' && b0 <= '9') ? b0 - '0' :
-		     (b0 >= 'a' && b0 <= 'f') ? b0 - 'a' + 10 :
-		     (b0 >= 'A' && b0 <= 'F') ? b0 - 'A' + 10 :
-		     -EINVAL;
-		if (b0 < 0) {
-			return b0;
-		}
-
-		b1 = (b1 >= '0' && b1 <= '9') ? b1 - '0' :
-		     (b1 >= 'a' && b1 <= 'f') ? b1 - 'a' + 10 :
-		     (b1 >= 'A' && b1 <= 'F') ? b1 - 'A' + 10 :
-		     -EINVAL;
-		if (b1 < 0) {
-			return b1;
-		}
-
-		buf[ib++] = ((b0 & 0xf) << 4) | ((b1 & 0xf) << 0);
-	}
 
 	return 0;
 }
