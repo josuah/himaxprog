@@ -62,13 +62,14 @@ static int hx_hex2bin(char *hex, uint8_t *buf)
 	return 0;
 }
 
-static int hx_chip_version(FILE *fp, unsigned int location)
+static int hx_chip_version(FT_DEVICE_LIST_INFO_NODE *info, void *arg)
 {
 	FT_HANDLE ftdi = NULL;
 	FT4222_Version v;
+	FILE *fp = arg;
 	int err;
 
-	err = FT_OpenEx((void *)(uintptr_t)location, FT_OPEN_BY_LOCATION, &ftdi);
+	err = FT_OpenEx((void *)(uintptr_t)info->LocId, FT_OPEN_BY_LOCATION, &ftdi);
 	if (err) {
 		perror("FT_OpenEx");
 		return err;
@@ -80,13 +81,24 @@ static int hx_chip_version(FILE *fp, unsigned int location)
 		return err;
 	}
 
+	fprintf(fp, "\nDevice '%s'\n", info->Description);
 	fprintf(fp, "  Chip version: %08X, LibFT4222 version: %08X\n",
 		v.chipVersion, v.dllVersion);
 
 	return 0;
 }
 
-static int hx_list(FILE *fp)
+static int hx_select_first(FT_DEVICE_LIST_INFO_NODE *info, void *arg)
+{
+	int *locid = arg;
+
+	fprintf(stderr, "Device '%s'\n", info->Description);
+
+	*locid = info->LocId;
+	return 1;
+}
+
+static int hx_scan(int (*fn)(FT_DEVICE_LIST_INFO_NODE *, void *), void *arg)
 {
 	FT_DEVICE_LIST_INFO_NODE *info = NULL;
 	unsigned int num = 0;
@@ -98,7 +110,7 @@ static int hx_list(FILE *fp)
 		perror("FT_CreateDeviceInfoList");
 		return err;
 	}
-	
+
 	if (num == 0) {
 		perror("No FTDI devices found");
 		return -ENODEV;
@@ -126,22 +138,27 @@ static int hx_list(FILE *fp)
 			 */
 			if (info[i].Description[n - 1] == 'A') {
 				/* Interface A may be configured as an I2C master. */
-				fprintf(fp, "\nDevice %u: '%s'\n", i, info[i].Description);
-				hx_chip_version(stdout, info[i].LocId);
+				err = (*fn)(&info[i], arg);
+				if (err) {
+					return err;
+				}
 			}
 			found = true;
 		}
-		 
+
 		if (info[i].Type == FT_DEVICE_4222H_3) {
 			/* In mode 3, the FT4222H presents a single interface. */
-			fprintf(fp, "\nDevice %u: '%s'\n", i, info[i].Description);
-			hx_chip_version(stdout, info[i].LocId);
+			err = (*fn)(&info[i], arg);
+			if (err) {
+				return err;
+			}
+
 			found = true;
 		}
 	}
 
 	if (!found) {
-		printf("No FT4222H detected.\n");
+		fprintf(stderr, "No valid FT4222H detected.\n");
 	}
 
 exit:
@@ -376,6 +393,35 @@ end:
 	return err;
 }
 
+static int cmd_i2c_scan(FT_HANDLE ftdi, char **argv)
+{
+	uint16_t _;
+	uint8_t buf[1] = {0};
+	int err;
+
+	(void)argv;
+
+	err = FT4222_I2CMaster_Init(ftdi, 1000/*kbps*/);
+	if (err) {
+		perror("FT4222_I2CMaster_Init");
+		return err;
+	}
+
+	for (uint16_t addr = 0; addr < 0x80; addr++) {
+		err = FT4222_I2CMaster_Write(ftdi, addr, buf, 0, &_);
+		if (err) {
+			printf(" --");
+		} else {
+			printf(" %02x", addr);
+		}
+		if ((addr + 1) % 16 == 0) {
+			printf("\n");
+		}
+	}
+
+	return 0;
+}
+
 static int cmd_gpio_read(FT_HANDLE ftdi, char **argv)
 {
 	GPIO_Dir directions[4] = {GPIO_INPUT, GPIO_INPUT, GPIO_INPUT, GPIO_INPUT};
@@ -498,11 +544,18 @@ static int cmd_reset(FT_HANDLE ftdi, char **argv)
 static int hx_run_command(int (*fn)(FT_HANDLE, char **), char **argv)
 {
 	FT_HANDLE ftdi;
+	int locid;
 	int err;
 
-	err = FT_Open(0, &ftdi);
+	err = hx_scan(hx_select_first, &locid);
+	if (err < 0) {
+		perror("hx_scan: scanning devices");
+		return err;
+	}
+
+	err = FT_OpenEx((void *)(uintptr_t)locid, FT_OPEN_BY_LOCATION, &ftdi);
 	if (err) {
-		perror("FT_Open");
+		perror("FT_OpenEx");
 		return err;
 	}
 
@@ -523,6 +576,8 @@ static const struct hx_cmd {
 	 "scan the presence of a flash chip on each SPI bus"},
 	{{"spi"}, 3, cmd_spi,
 	 "Write to SPI num <arg1> the hex data <arg2> then read <arg3> bytes"},
+	{{"i2c", "scan"}, 0, cmd_i2c_scan,
+	 "Perform an I2C scan on the I2C interface <arg1>"},
 	{{"gpio", "read"}, 0, cmd_gpio_read,
 	 "Read from all 4 GPIO pins"},
 	{{"gpio", "write"}, 1, cmd_gpio_write,
@@ -554,7 +609,7 @@ static int usage(char *argv0)
 		fprintf(stderr, "\n    %s\n", cmd->help);
 	}
 
-	return hx_list(stdout);
+	return hx_scan(hx_chip_version, stderr);
 }
 
 int main(int argc, char **argv)
