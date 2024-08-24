@@ -168,13 +168,11 @@ exit:
 
 static int hx_flash_wake(FT_HANDLE ftdi)
 {
-	struct timespec ts = {0};
 	uint8_t byte;
 	uint16_t _;
 	int err;
 
-	ts.tv_nsec = 1000 * 1000;
-	err = nanosleep(&ts, NULL);
+	err = nanosleep(&(struct timespec){.tv_nsec = 1000 * 1000}, NULL);
 	if (err) {
 		perror("nanosleep");
 		return err;
@@ -186,8 +184,7 @@ static int hx_flash_wake(FT_HANDLE ftdi)
 		return err;
 	}
 
-	ts.tv_nsec = 1000*1000;
-	err = nanosleep(&ts, NULL);
+	err = nanosleep(&(struct timespec){.tv_nsec = 1000 * 1000}, NULL);
 	if (err) {
 		perror("nanosleep");
 		return err;
@@ -199,8 +196,7 @@ static int hx_flash_wake(FT_HANDLE ftdi)
 		return err;
 	}
 
-	ts.tv_nsec = 1000*1000;
-	err = nanosleep(&ts, NULL);
+	err = nanosleep(&(struct timespec){.tv_nsec = 1000 * 1000}, NULL);
 	if (err) {
 		perror("nanosleep");
 		return err;
@@ -444,7 +440,7 @@ static int cmd_gpio_read(FT_HANDLE ftdi, char **argv)
 			perror("FT4222_GPIO_Read");
 			return err;
 		}
-		printf(" %lu:%s", i, val ? "high" : "low");
+		printf(" %u:%s", (int)i, val ? "high" : "low");
 	}	
 	printf("\n");
 
@@ -453,31 +449,36 @@ static int cmd_gpio_read(FT_HANDLE ftdi, char **argv)
 
 static int cmd_gpio_write(FT_HANDLE ftdi, char **argv)
 {
-	GPIO_Dir directions[4];
+	GPIO_Dir direction[4];
+	GPIO_Port port[4] = { GPIO_PORT0, GPIO_PORT1, GPIO_PORT2, GPIO_PORT3 };
+	size_t n;
 	int err;
 
-	if (strspn(argv[0], "01z") != 4 && argv[0][4] != '\0') {
-		fprintf(stderr, "expecting a string[4] made of '0', '1' or 'z'\n");
+	n = strspn(argv[0], "01z");
+	if (n > 4 || argv[0][n] != '\0') {
+		fprintf(stderr, "expecting a at most 4 characters among [01z]\n");
 		return -EINVAL;
 	}
 
-	directions[0] = argv[0][0] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
-	directions[1] = argv[0][1] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
-	directions[2] = argv[0][2] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
-	directions[3] = argv[0][3] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
+	direction[0] = argv[0][0] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
+	direction[1] = argv[0][1] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
+	direction[2] = argv[0][2] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
+	direction[3] = argv[0][3] == 'z' ? GPIO_INPUT : GPIO_OUTPUT;
 
-	err = FT4222_GPIO_Init(ftdi, directions);
+	err = FT4222_GPIO_Init(ftdi, direction);
 	if (err) {
 		perror("FT4222_GPIO_Init");
 		return err;
 	}
 
-	for (size_t i = 0; i < 4; i++) {
-		if (directions[i] == GPIO_INPUT) {
+	for (size_t i = 0; i < n; i++) {
+		if (direction[i] == GPIO_INPUT) {
 			continue;
 		}
 
-		err = FT4222_GPIO_Write(ftdi, i, argv[0][i] - '0');
+		fprintf(stderr, "setting pin %u to %u\n", (int)i, argv[0][i] - '0');
+
+		err = FT4222_GPIO_Write(ftdi, port[i], argv[0][i] - '0');
 		if (err) {
 			perror("FT4222_GPIO_Write");
 			return err;
@@ -604,7 +605,7 @@ static int usage(char *argv0)
 			fprintf(stderr, " %s", cmd->argv[ii]);
 		}
 		for (size_t ii = 0; ii < cmd->argc; ii++) {
-			fprintf(stderr, " <arg%lu>", ii + 1);
+			fprintf(stderr, " <arg%u>", (int)(ii + 1));
 		}
 		fprintf(stderr, "\n    %s\n", cmd->help);
 	}

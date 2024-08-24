@@ -9,7 +9,7 @@ clean:
 	rm -f himaxprog
 
 himaxprog: $(SRC)
-	$(CC) $(CFLAGS) -o $@ $(SRC) $(LIB)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC) $(LIB)
 
 install: himaxprog
 	cp himaxprog $(PREFIX)/bin/himaxprog
